@@ -15,8 +15,28 @@ app.use(cors());
 let waitingUsers = [];
 let activeRooms = new Map();
 
+// console.log(waitingUsers);
+
 const handleUserLeave = (socket) => {
-  //SKIP LOGIC WILL COME HERE
+  const userData = activeRooms.get(socket.id);
+  if (userData) {
+    const { roomId, partnerId } = userData;
+
+    // Notify partner
+    if (partnerId && io.sockets.sockets.get(partnerId)) {
+      io.to(partnerId).emit("partner-left");
+      activeRooms.delete(partnerId);
+    }
+
+    // Clean up room
+    socket.leave(roomId);
+    activeRooms.delete(socket.id);
+
+    console.log(`User ${socket.id} left room ${roomId}`);
+  }
+
+  // Remove from waiting queue
+  waitingUsers = waitingUsers.filter((user) => user.id !== socket.id);
 };
 
 io.on("connection", (socket) => {
@@ -39,11 +59,13 @@ io.on("connection", (socket) => {
       activeRooms.set(socket.id, {
         roomId,
         partnerId: partner.id,
+        isInitiator: false,
       });
 
       activeRooms.set(partner.id, {
         roomId,
         partnerId: socket.id,
+        isInitiator: true,
       });
 
       //Added both users to active room with there room id and there partner id
@@ -51,10 +73,12 @@ io.on("connection", (socket) => {
       socket.emit("matched", {
         roomId,
         partnerId: partner.id,
+        isInitiator: false,
       });
       partner.emit("matched", {
         roomId,
         partnerId: socket.id,
+        isInitiator: true,
       });
     } else {
       waitingUsers.push(socket);
@@ -65,10 +89,12 @@ io.on("connection", (socket) => {
 
   //OFFER
   socket.on("offer", ({ target, offer }) => {
-    socket.to(target).emit("offer", {
-      offer,
-      senderId: socket.id,
-    });
+    if (io.sockets.sockets.get(target)) {
+      socket.to(target).emit("offer", {
+        offer,
+        senderId: socket.id,
+      });
+    }
   });
 
   //ANSWER
@@ -88,6 +114,11 @@ io.on("connection", (socket) => {
   });
 
   //SKIP USER
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected: " + socket.id);
+    handleUserLeave(socket);
+  });
 
   socket.on("skip", () => {
     handleUserLeave(socket);
